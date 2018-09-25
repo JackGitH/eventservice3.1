@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+option go_package = "helloworld";
+option java_multiple_files = true;
+option java_package = "demo";
+option java_outer_classname = "HelloWorldProto";
+
+
+package helloworld;
+
+// The greeter service definition.
+/*service Greeter {
+    // Sends a greeting
+    rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+service Greeter2{
+    rpc ChangeSayHello(stream HelloRequest) returns(stream HelloReply){}
+}
+// The request message containing the user's name.
+message HelloRequest {
+    string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+    string message = 1;
+}*/
+
+// Go为服务端 事件服务器与客户端和链交互
+service GoTranscationService{
+    rpc GoClientRegistEvent(ClientRegisterAddressReq)returns (ClientRegisterAddressRes){}
+    rpc GoClientRequestEvent(ClientTransactionReq)returns(ClientTransactionRes){}
+    rpc GoChainRequestEvent(stream ChainTranscationReq)returns(stream ChainTranscationRes){}
+}
+
+// java为服务端 与事件服务器交互
+service JavaTranscationService{
+    rpc JavaClientRequestEvent(stream ClientTransactionReq)returns(stream ClientTransactionRes){}
+}
+
+message ClientRegisterAddressReq{
+    string AddRessReq= 1;
+    string SignatureReq = 2;
+}
+
+message ClientRegisterAddressRes{
+    string AddRessRes = 1;
+    bool IsSuccess = 2;
+    string MessageRes = 3;
+}
+
+message ClientTransactionReq{
+    string TxidReq= 1;
+}
+
+message ClientTransactionRes{
+    string CodeRes = 1;
+    string MessageRes = 2;
+}
+
+message ChainTranscationReq{
+    string BatchidReq = 1;
+    map<string,string> TxsReq =2;
+}
+
+message ChainTranscationRes{
+    string BatchidReq = 1;
+    bool IsSuccess =2;
+}
+

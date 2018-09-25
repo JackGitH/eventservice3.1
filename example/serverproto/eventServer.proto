@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+option go_package = "serverproto";
+option java_multiple_files = true;
+option java_package = "serverproto";
+option java_outer_classname = "JavaTranscationServerProto";
+
+
+package server;
+
+
+// Go为服务端 事件服务器与客户端和链交互
+service GoEventService{
+    rpc GoClientRegistEvent(ClientRegisterAddressReq)returns (ClientRegisterAddressRes){}
+    rpc GoClientRequestEvent(ClientTransactionReq)returns(ClientTransactionRes){}
+    rpc GoChainRequestEvent(stream ChainTranscationReq)returns(stream ChainTranscationRes){}
+}
+
+// java为服务端 与事件服务器交互
+service JavaEventService{
+    rpc JavaClientRequestEvent(stream ClientTransactionJavaReq)returns(stream ClientTransactionJavaRes){}
+}
+
+//客户端注册地址
+message ClientRegisterAddressReq{
+    string AddRessIpReq= 1; //ip
+    string AddRessPortReq= 2; //端口
+    string RemarkReq = 3; // 备注
+}
+//服务端注册地址返回值
+message ClientRegisterAddressRes{
+    string MessageRes = 1; // 成功信息
+    bool IsSuccess = 2; //注册成功标志
+    string MessageIDRes = 3; //成功
+}
+
+//客户端请求交易体
+message ClientTransactionReq{
+    string TxidReq= 1;
+}
+
+//服务端请求交易返回值
+message ClientTransactionRes{
+    string TxidRes = 1;
+    string CodeRes = 2;
+    string MessageRes = 3;
+}
+
+//链请求交易体
+message ChainTranscationReq{
+    string BatchidReq = 1; // 批id
+    map<string,string> TxsReq =2; // 批交易集合
+}
+
+//服务端对链请求交易返回值
+message ChainTranscationRes{
+    string BatchidReq = 1;
+    bool IsSuccess =2;
+}
+
+//服务端发送java请求参数
+message ClientTransactionJavaReq{
+    string TxidRes = 1;
+    string CodeRes = 2;
+    string MessageRes = 3;
+}
+
+
+//go客户端收到java服务端返回值
+message ClientTransactionJavaRes{
+    string TxidRes = 1;
+    string IsReceivedRes = 2;
+}
+

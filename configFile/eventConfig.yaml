@@ -1,0 +1,14 @@
+mysql:
+    ip: 10.10.144.10
+    port: 4444
+    username: root
+    passwd: UMF@test
+    dataBaseName: eventserver
+    registerTableName: events_client_address
+    eventmsgtableName: events_msg
+    idleConn: 500
+    maxConn: 500
+    libName: LIUDS
+
+monitor:
+    mport: 8852
