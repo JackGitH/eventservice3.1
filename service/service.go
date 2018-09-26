@@ -30,20 +30,26 @@ const (
 	code1001 = "1001"
 	code1002 = "1002"
 	code1003 = "1003"
+	code1004 = "1004"
+	code1005 = "1005"
 	msg1000  = "交易成功"
 	msg1001  = "交易进行中"
 	msg1002  = "交易失败"
 	msg1003  = "交易不存在"
+	msg1004  = "交易异常"
+	msg1005  = "未注册，请求失败"
 
 	msgRegist01 = "该ip-port已注册"
 	msgRegist02 = "注册成功"
 	msgRegist03 = "注册失败"
+	msgRegist04 = "交易异常"
 )
 
 //server核心
 type server struct {
-	ec *configMgr.EventConfig
-	dh *db.DbHandler
+	ec           *configMgr.EventConfig
+	dh           *db.DbHandler
+	addressIdMap map[string]string
 }
 
 // 建表字段 ghc date 2018年9月25日10点41分
@@ -52,6 +58,9 @@ type ASSETFIELDNAME string
 const (
 	ID          ASSETFIELDNAME = "ID"
 	IP          ASSETFIELDNAME = "IP"
+	ECODE       ASSETFIELDNAME = "ECODE"
+	EMESSAGE    ASSETFIELDNAME = "EMESSAGE"
+	CHAINID     ASSETFIELDNAME = "CHAINID"
 	TXID        ASSETFIELDNAME = "TXID"
 	ECLIENTPORT ASSETFIELDNAME = "ECLIENTPORT"
 	ECLIENTIP   ASSETFIELDNAME = "ECLIENTIP"
@@ -60,31 +69,41 @@ const (
 	PORT        ASSETFIELDNAME = "PORT"
 )
 
+/**
+* @Title: service.go
+* @Description: GoClientRegistEvent  注册
+* @author ghc
+* @date 9/25/18 16:50 PM
+* @version V1.0
+ */
 func (s *server) GoClientRegistEvent(ctx context.Context, request *sv.ClientRegisterAddressReq) (*sv.ClientRegisterAddressRes, error) {
-	fmt.Println("request0", request)
 	ip := request.AddRessIpReq
-	fmt.Println("--------------------------------")
-	fmt.Println("request1", request)
-	fmt.Println("s", s)
 	port := request.AddRessPortReq
 	remarkReq := request.RemarkReq
 	tm := time.Now().UnixNano()
-	ipPort := ip + port
+	ipPort := ip + ":" + port
 	sql := fmt.Sprintf("select count(*) as acount from %s where %s = '%s' and %s ='%s'",
 		s.ec.Config.RegisterTableName, ECLIENTIP, ip, ECLIENTPORT, port)
 	serviceLog.Info("findRepeat sql", sql)
 
 	rows, err := s.dh.Db.Query(sql) //查询去重
+	if err != nil {
+		serviceLog.Error("findRepeat err", err)
+		return &sv.ClientRegisterAddressRes{MessageRes: msgRegist04, IsSuccess: false, MessageIDRes: ""}, err
+	}
 	defer rows.Close()
 	var acount int
 	if rows != nil {
 		for rows.Next() {
 			err = rows.Scan(&acount)
+			if err != nil {
+				return &sv.ClientRegisterAddressRes{MessageRes: msgRegist04, IsSuccess: false, MessageIDRes: ""}, err
+			}
 		}
+	} else {
+		return &sv.ClientRegisterAddressRes{MessageRes: msgRegist03, IsSuccess: false, MessageIDRes: ""}, nil
 	}
-	if err != nil {
-		serviceLog.Error("findRepeat err", err)
-	}
+
 	fmt.Println("acount", acount)
 
 	//去重
@@ -122,26 +141,83 @@ func (s *server) GoClientRegistEvent(ctx context.Context, request *sv.ClientRegi
 			/*ph.DataCacheMap.Delete(sc.DataHash)*/
 			serviceLog.Errorf("write db err:%s", err.Error())
 		}
+		s.addressIdMap[idStr] = ipPort //放在缓存中
 		return &sv.ClientRegisterAddressRes{MessageRes: msgRegist02, IsSuccess: true, MessageIDRes: idStr}, nil
 	} else {
 		return &sv.ClientRegisterAddressRes{MessageRes: msgRegist01, IsSuccess: false, MessageIDRes: ""}, nil
 	}
-	/*
-		i := 0
-		for rows.Next() {
-			i++
-		}
-		if i >= 1 {
-			return &sv.ClientRegisterAddressRes{MessageRes: msgRegist01, IsSuccess: false, MessageIDRes: ""}, nil
-		}*/
 
 }
-func (s *server) GoClientRequestEvent(ctx context.Context, in *sv.ClientTransactionReq) (*sv.ClientTransactionRes, error) {
-	return nil, nil
+
+/**
+* @Title: service.go
+* @Description: GoClientRequestEvent  处理客户端请求txid
+* @author ghc
+* @date 9/25/18 16:50 PM
+* @version V1.0
+ */
+func (s *server) GoClientRequestEvent(ctx context.Context, request *sv.ClientTransactionReq) (*sv.ClientTransactionRes, error) {
+	addressId := request.AddressIdReq
+	chainId := request.ChainIdReq
+	txid := request.TxIdReq
+
+	cap, ok := s.addressIdMap[addressId] //先判断是否注册
+	fmt.Println("s.addressIdMap：", s.addressIdMap)
+	if !ok {
+		fmt.Println("addressId Non-existent", cap)
+		serviceLog.Info("addressId Non-existent:", addressId)
+		return &sv.ClientTransactionRes{TxIdRes: txid, CodeRes: code1005, MessageRes: msg1005, TimeRes: "", ChainIdRes: ""}, nil
+	}
+
+	sql := fmt.Sprintf("select %s,%s,%s,%s,%s from %s where %s = '%s' and %s ='%s'",
+		TXID, ECODE, EMESSAGE, ETIME, CHAINID, s.ec.Config.EventmsgtableName, TXID, txid, CHAINID, chainId)
+	serviceLog.Info("RequestEvent sql", sql)
+
+	rows, err := s.dh.Db.Query(sql) //查询去重
+	if err != nil {
+		serviceLog.Error("GoClientRequestEvent err", err)
+		return &sv.ClientTransactionRes{TxIdRes: txid, CodeRes: code1004, MessageRes: msg1004, TimeRes: "", ChainIdRes: ""}, err
+	}
+	defer rows.Close()
+	if rows != nil {
+		for rows.Next() {
+
+			var txidr string
+			var ecoder string
+			var emessager string
+			var etimer string
+			var chainIdr string
+
+			fmt.Println("txidr:", txidr, "---ecoder:", ecoder, "---emessager:", emessager, "---etimer:", etimer, "---chainIdr:", chainIdr)
+			err = rows.Scan(&txidr, &ecoder, &emessager, &etimer, &chainIdr)
+			if err != nil {
+				fmt.Println("GoClientRequestEvent err", err)
+				serviceLog.Error("GoClientRequestEvent err", err)
+				return &sv.ClientTransactionRes{TxIdRes: txid, CodeRes: code1004, MessageRes: msg1004, TimeRes: "", ChainIdRes: ""}, err
+			}
+			return &sv.ClientTransactionRes{TxIdRes: txidr, CodeRes: ecoder, MessageRes: emessager, TimeRes: etimer, ChainIdRes: chainIdr}, err
+		}
+
+	} else {
+		return &sv.ClientTransactionRes{TxIdRes: txid, CodeRes: code1003, MessageRes: msg1003, TimeRes: "", ChainIdRes: ""}, err
+	}
+
+	return &sv.ClientTransactionRes{TxIdRes: txid, CodeRes: code1003, MessageRes: msg1003, TimeRes: "", ChainIdRes: ""}, err
 }
+
+/*func (s *server) GoChainRequestEvent(ctx context.Context) (*sv.GoEventService_GoChainRequestEventClient, error) {
+	return nil, nil
+}*/
 func (s *server) GoChainRequestEvent(sv.GoEventService_GoChainRequestEventServer) error {
 	return nil
 }
+func (s *server) GoChainRequestCountEvent(sv.GoEventService_GoChainRequestCountEventServer) error {
+	return nil
+}
+
+/*func (s *server) GoChainRequestCountEvent(ctx context.Context) (*sv.GoEventService_GoChainRequestEventClient, error) {
+	return nil, nil
+}*/
 
 /**
 * @Title: service.go
@@ -165,6 +241,7 @@ func (s *server) init() {
 		serviceLog.Error("newEventConfig fail", err)
 	}
 	s.ec = evcf
+	s.addressIdMap = make(map[string]string) //初始化缓存map
 }
 
 /**

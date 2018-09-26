@@ -2,7 +2,7 @@ syntax = "proto3";
 
 option go_package = "serverproto";
 option java_multiple_files = true;
-option java_package = "serverproto";
+option java_package = "serverproto.serverproto";
 option java_outer_classname = "JavaTranscationServerProto";
 
 
@@ -14,6 +14,7 @@ service GoEventService{
     rpc GoClientRegistEvent(ClientRegisterAddressReq)returns (ClientRegisterAddressRes){}
     rpc GoClientRequestEvent(ClientTransactionReq)returns(ClientTransactionRes){}
     rpc GoChainRequestEvent(stream ChainTranscationReq)returns(stream ChainTranscationRes){}
+    rpc GoChainRequestCountEvent(stream ChainTranscationAccountReq)returns(stream ChainTranscationAccountRes){}
 }
 
 // java为服务端 与事件服务器交互
@@ -36,31 +37,50 @@ message ClientRegisterAddressRes{
 
 //客户端请求交易体
 message ClientTransactionReq{
-    string TxidReq= 1;
+    string TxIdReq= 1;
+    string AddressIdReq = 2;
+    string ChainIdReq = 3;
 }
 
 //服务端请求交易返回值
 message ClientTransactionRes{
-    string TxidRes = 1;
+    string TxIdRes = 1;
     string CodeRes = 2;
     string MessageRes = 3;
+    string TimeRes = 4;
+    string ChainIdRes = 5;
 }
 
 //链请求交易体
 message ChainTranscationReq{
-    string BatchidReq = 1; // 批id
-    map<string,string> TxsReq =2; // 批交易集合
+    string TxIdReq = 1;
+    string TxIpReq =2;
+    int32 TotalVotesReq = 3;
 }
 
 //服务端对链请求交易返回值
 message ChainTranscationRes{
-    string BatchidReq = 1;
-    bool IsSuccess =2;
+    string TxIdRes = 1;
+    bool IsReceivedRes =2;
+}
+
+//链请求交易体
+message ChainTranscationAccountReq{
+    string TxIdReq = 1;
+    bool IsSuccessReq =2;
+    string CodeReq = 3;
+    string MessageReq = 4;
+}
+
+//服务端对链请求交易返回值
+message ChainTranscationAccountRes{
+    string TxIdRes = 1;
+    bool IsReceivedRes =2;
 }
 
 //服务端发送java请求参数
 message ClientTransactionJavaReq{
-    string TxidRes = 1;
+    string TxIdRes = 1;
     string CodeRes = 2;
     string MessageRes = 3;
 }
@@ -68,7 +88,7 @@ message ClientTransactionJavaReq{
 
 //go客户端收到java服务端返回值
 message ClientTransactionJavaRes{
-    string TxidRes = 1;
+    string TxIdRes = 1;
     string IsReceivedRes = 2;
 }
 
