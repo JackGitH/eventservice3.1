@@ -14,6 +14,7 @@ import (
 	"io/ioutil"
 
 	"encoding/hex"
+	"io"
 	"protocdemo/configMgr"
 	"protocdemo/db"
 	sv "protocdemo/example/serverproto"
@@ -52,6 +53,14 @@ type server struct {
 	addressIdMap map[string]string
 }
 
+var TxidsMap map[string]VoteAccount
+
+type VoteAccount struct {
+	txid       string
+	totalVotes int
+	votesMap   map[string]string
+}
+
 // 建表字段 ghc date 2018年9月25日10点41分
 type ASSETFIELDNAME string
 
@@ -67,6 +76,8 @@ const (
 	ETIME       ASSETFIELDNAME = "ETIME"
 	REMARK      ASSETFIELDNAME = "REMARK"
 	PORT        ASSETFIELDNAME = "PORT"
+	TXIP        ASSETFIELDNAME = "TXIP"
+	TOTALNODES  ASSETFIELDNAME = "TOTALNODES"
 )
 
 /**
@@ -205,11 +216,104 @@ func (s *server) GoClientRequestEvent(ctx context.Context, request *sv.ClientTra
 	return &sv.ClientTransactionRes{TxIdRes: txid, CodeRes: code1003, MessageRes: msg1003, TimeRes: "", ChainIdRes: ""}, err
 }
 
-/*func (s *server) GoChainRequestEvent(ctx context.Context) (*sv.GoEventService_GoChainRequestEventClient, error) {
-	return nil, nil
-}*/
-func (s *server) GoChainRequestEvent(sv.GoEventService_GoChainRequestEventServer) error {
-	return nil
+/**
+* @Title: service.go
+* @Description: GoChainRequestEvent  uchains commitx阶段 收集txid
+* @author ghc
+* @date 9/27/18 15:31 PM
+* @version V1.0
+ */
+func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEventServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			fmt.Println("read done")
+			return nil
+		}
+		if err != nil {
+			fmt.Println("Server Stream ERR", err)
+			serviceLog.Error("Server Stream recv err", err)
+			stream.Send(&sv.ChainTranscationRes{TxIdRes: "", IsReceivedRes: false})
+			return err
+		}
+		fmt.Println("req: ", req)
+		reqTxId := req.TxIdReq
+		reqTxIp := req.TxIpReq
+		reqTotalNotes := req.TotalVotesReq
+		reqChainId := req.ChainIdReq
+		reqEcode := code1001
+		reqMessage := msg1001
+		etime := time.Now().UnixNano()
+
+		_, ok := TxidsMap[reqTxId] //先缓存查询 若不存在，则取查询数据库
+		if !ok {
+
+			sql := fmt.Sprintf("select count(*) as acount from %s where %s = '%s'",
+				s.ec.Config.EventmsgtableName, TXID, reqTxId)
+			serviceLog.Info("findRepeat sql", sql)
+
+			rows, err := s.dh.Db.Query(sql) //查询去重
+			if err != nil {
+				serviceLog.Error("findRepeat err", err)
+				return err
+			}
+			defer rows.Close()
+			var acount int
+			if rows != nil {
+				for rows.Next() {
+					err = rows.Scan(&acount)
+					if err != nil {
+						return err
+					}
+				}
+			} else {
+				return nil
+			}
+			if acount == 0 {
+				//拼接sql
+				sqlValue := fmt.Sprintf("('%s','%s','%s','%d','%s','%s','%d')",
+					reqTxId,
+					reqEcode,
+					reqMessage,
+					etime,
+					reqChainId,
+					reqTxIp,
+					reqTotalNotes,
+				)
+				sqlSentence := fmt.Sprintf("insert into %s(%s,%s,%s,%s,%s,%s,%s) "+
+					"values",
+					s.ec.Config.EventmsgtableName,
+					TXID,
+					ECODE,
+					EMESSAGE,
+					ETIME,
+					CHAINID,
+					TXIP,
+					TOTALNODES,
+				)
+				sqlFinal := sqlSentence + sqlValue
+
+				//写库
+				serviceLog.Info("sqlFinal is ", sqlFinal)
+				_, err = s.dh.Db.Exec(sqlFinal)
+				if err != nil {
+					/*ph.DataCacheMap.Delete(sc.DataHash)*/
+					serviceLog.Errorf("write db err:%s", err.Error())
+				}
+			}
+			voteMap := VoteAccount{}
+			voteMap.txid = reqTxId
+			voteMap.totalVotes = 0
+			voteMap.votesMap = make(map[string]string)
+			TxidsMap[reqTxId] = voteMap //缓存txid和票数
+		}
+		err = stream.Send(&sv.ChainTranscationRes{TxIdRes: req.TxIdReq, IsReceivedRes: true})
+		if err != nil {
+			serviceLog.Error(req.TxIdReq + "Server Stream send fail")
+			return err
+		}
+	}
+
 }
 func (s *server) GoChainRequestCountEvent(sv.GoEventService_GoChainRequestCountEventServer) error {
 	return nil
@@ -242,6 +346,7 @@ func (s *server) init() {
 	}
 	s.ec = evcf
 	s.addressIdMap = make(map[string]string) //初始化缓存map
+	TxidsMap = make(map[string]VoteAccount)  //缓存消息票数的队列
 }
 
 /**
