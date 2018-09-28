@@ -18,6 +18,7 @@ import (
 	"protocdemo/configMgr"
 	"protocdemo/db"
 	sv "protocdemo/example/serverproto"
+	"sync"
 	"time"
 )
 
@@ -44,21 +45,39 @@ const (
 	msgRegist02 = "注册成功"
 	msgRegist03 = "注册失败"
 	msgRegist04 = "交易异常"
+
+	constAmount = 1 / 3 // 1/3容错
 )
 
 //server核心
 type server struct {
-	ec           *configMgr.EventConfig
-	dh           *db.DbHandler
-	addressIdMap map[string]string
+	ec                 *configMgr.EventConfig
+	dh                 *db.DbHandler
+	addressIdMap       map[string]string
+	updateIspushedChan chan *UpdateIspushedsql
+}
+type UpdateIspushedsql struct {
+	sql string
 }
 
-var TxidsMap map[string]VoteAccount
+var TxidsMap sync.Map
+
+var ClientTransactionJavaReqChan chan *ClientTransactionJavaReq
+
+type ClientTransactionJavaReq struct {
+	TxId     string
+	Ecode    string
+	Emessage string
+	ChainId  string
+}
 
 type VoteAccount struct {
-	txid       string
-	totalVotes int
-	votesMap   map[string]string
+	txid            string
+	totalNodes      int32
+	votesSuccessMap map[string]string
+	votesFailedMap  map[string]string
+	txtask          *time.Timer
+	chainId         string
 }
 
 // 建表字段 ghc date 2018年9月25日10点41分
@@ -78,6 +97,7 @@ const (
 	PORT        ASSETFIELDNAME = "PORT"
 	TXIP        ASSETFIELDNAME = "TXIP"
 	TOTALNODES  ASSETFIELDNAME = "TOTALNODES"
+	ISPUSHED    ASSETFIELDNAME = "ISPUSHED"
 )
 
 /**
@@ -243,9 +263,10 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 		reqChainId := req.ChainIdReq
 		reqEcode := code1001
 		reqMessage := msg1001
+		isPushed := 0 //默认未推送
 		etime := time.Now().UnixNano()
 
-		_, ok := TxidsMap[reqTxId] //先缓存查询 若不存在，则取查询数据库
+		_, ok := TxidsMap.Load(reqTxId) //先缓存查询 若不存在，则取查询数据库
 		if !ok {
 
 			sql := fmt.Sprintf("select count(*) as acount from %s where %s = '%s'",
@@ -271,7 +292,7 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 			}
 			if acount == 0 {
 				//拼接sql
-				sqlValue := fmt.Sprintf("('%s','%s','%s','%d','%s','%s','%d')",
+				sqlValue := fmt.Sprintf("('%s','%s','%s','%d','%s','%s','%d','%d')",
 					reqTxId,
 					reqEcode,
 					reqMessage,
@@ -279,8 +300,9 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 					reqChainId,
 					reqTxIp,
 					reqTotalNotes,
+					isPushed,
 				)
-				sqlSentence := fmt.Sprintf("insert into %s(%s,%s,%s,%s,%s,%s,%s) "+
+				sqlSentence := fmt.Sprintf("insert into %s(%s,%s,%s,%s,%s,%s,%s,%s) "+
 					"values",
 					s.ec.Config.EventmsgtableName,
 					TXID,
@@ -290,6 +312,7 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 					CHAINID,
 					TXIP,
 					TOTALNODES,
+					ISPUSHED,
 				)
 				sqlFinal := sqlSentence + sqlValue
 
@@ -303,9 +326,14 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 			}
 			voteMap := VoteAccount{}
 			voteMap.txid = reqTxId
-			voteMap.totalVotes = 0
-			voteMap.votesMap = make(map[string]string)
-			TxidsMap[reqTxId] = voteMap //缓存txid和票数
+			voteMap.chainId = reqChainId
+			voteMap.totalNodes = reqTotalNotes
+			voteMap.votesSuccessMap = make(map[string]string)
+			voteMap.votesFailedMap = make(map[string]string)
+			voteMap.txtask = time.AfterFunc(120, func() {
+				TaskEvent(reqTxId, s)
+			})
+			TxidsMap.Store(reqTxId, voteMap) //缓存txid和票数
 		}
 		err = stream.Send(&sv.ChainTranscationRes{TxIdRes: req.TxIdReq, IsReceivedRes: true})
 		if err != nil {
@@ -315,8 +343,191 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 	}
 
 }
-func (s *server) GoChainRequestCountEvent(sv.GoEventService_GoChainRequestCountEventServer) error {
-	return nil
+
+/**
+* @Title: service.go
+* @Description: GoChainRequestCountEvent  uchains 交易统计阶段 收集votes
+* @author ghc
+* @date 9/28/18 17:59 PM
+* @version V1.0
+ */
+func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainRequestCountEventServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			fmt.Println("read done")
+			return nil
+		}
+		if err != nil {
+			fmt.Println("Server Stream ERR", err)
+			serviceLog.Error("Server Stream recv err", err)
+			stream.Send(&sv.ChainTranscationAccountRes{TxIdRes: "", IsReceivedRes: false})
+			return err
+		}
+		txidreq := req.TxIdReq
+		codereq := req.CodeReq
+		messreq := req.MessageReq
+		issuccreq := req.IsSuccessReq
+		nodeidreq := req.NodeIdReq
+		value, ok := TxidsMap.Load(txidreq) //map 中不存在，
+		if !ok {
+
+			serviceLog.Warning(txidreq, "hash handle over or txid not exit")
+
+		} else {
+
+			voteVal := VoteAccount(value)
+			totalNods := voteVal.totalNodes * constAmount
+			var code string
+			var msg string
+			if issuccreq {
+				voteVal.votesSuccessMap[txidreq] = nodeidreq
+				TxidsMap.Store(txidreq, voteVal)
+				voteAmount := int32(len(voteVal.votesSuccessMap))
+				succ := voteAmount >= totalNods
+				if succ {
+					code = code1000
+					msg = msg1000
+					sqlFinal := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
+						s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txidreq)
+					_, err := s.dh.Db.Exec(sqlFinal)
+					if err != nil {
+						serviceLog.Error("GoChainRequestCountEvent db set ecode fail txid", txidreq)
+					} else {
+						tarnsJavaReq := &ClientTransactionJavaReq{}
+						tarnsJavaReq.TxId = txidreq
+						tarnsJavaReq.ChainId = voteVal.chainId
+						tarnsJavaReq.Ecode = code
+						tarnsJavaReq.Emessage = msg
+						ClientTransactionJavaReqChan <- tarnsJavaReq
+						err = stream.Send(&sv.ChainTranscationAccountRes{txidreq, true})
+						if err != nil {
+							serviceLog.Error(txidreq + "Server Stream send fail")
+							return err
+						}
+					}
+				}
+			} else {
+				voteVal.votesFailedMap[txidreq] = nodeidreq
+				TxidsMap.Store(txidreq, voteVal)
+				voteAmount := int32(len(voteVal.votesFailedMap))
+				fail := voteAmount >= totalNods
+				if fail {
+					code = codereq //todo 这里的失败原因使用的uchains返回的
+					msg = messreq  //
+					sqlFinal := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
+						s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txidreq)
+					_, err := s.dh.Db.Exec(sqlFinal)
+					if err != nil {
+						serviceLog.Error("GoChainRequestCountEvent db set ecode fail txid", txidreq)
+					} else {
+						tarnsJavaReq := &ClientTransactionJavaReq{}
+						tarnsJavaReq.TxId = txidreq
+						tarnsJavaReq.ChainId = voteVal.chainId
+						tarnsJavaReq.Ecode = code
+						tarnsJavaReq.Emessage = msg
+						ClientTransactionJavaReqChan <- tarnsJavaReq
+						err = stream.Send(&sv.ChainTranscationAccountRes{txidreq, true})
+						if err != nil {
+							serviceLog.Error(txidreq + "Server Stream send fail")
+							return err
+						}
+					}
+
+				}
+			}
+
+		}
+
+	}
+}
+
+/**
+* @Title: service.go
+* @Description: GoJavaRequestEvent  uchains 交易成功 推送消息到java服务器
+* @author ghc
+* @date 9/28/18 17:59 PM
+* @version V1.0
+ */
+func (s *server) GoJavaRequestEvent(stream sv.GoEventService_GoJavaRequestEventServer) error {
+	for {
+		select {
+		//tx 成功或失败  推送消息
+		case cj := <-ClientTransactionJavaReqChan:
+			req, err := stream.Recv()
+			if err == io.EOF {
+				fmt.Println("read done")
+				return err
+			}
+			if err != nil {
+				fmt.Println("Server Stream ERR", err)
+				serviceLog.Error("Server Stream recv err", err)
+				return err
+			}
+			if req != nil {
+				serviceLog.Info("GoJavaRequestEvent send txid success:", req.TxIdRes)
+				sqlFinal := fmt.Sprintf("update %s set %s = '%s'  where %s = '%s'",
+					s.ec.Config.EventmsgtableName, ISPUSHED, 1, TXID, req.TxIdRes)
+				serviceLog.Info("update ispushed sqlFinal", sqlFinal)
+				usql := &UpdateIspushedsql{}
+				usql.sql = sqlFinal
+				s.updateIspushedChan <- usql
+			}
+			err = stream.Send(&sv.ClientTransactionJavaReq{cj.TxId, cj.Ecode, cj.Emessage, cj.ChainId})
+			if err != nil {
+				serviceLog.Error(cj.TxId + ":Server Stream send fail")
+				return err
+			}
+		}
+	}
+
+}
+
+/**
+* @Title: service.go
+* @Description: TaskEvent   定时器处理阶段
+* @author ghc
+* @date 9/27/18 16:55 PM
+* @version V1.0
+ */
+func TaskEvent(txid string, s *server) {
+	value, _ := TxidsMap.Load(txid) //map 中不存在，
+	voteVal := VoteAccount(value)
+	totalNods := voteVal.totalNodes * constAmount
+	voteAmountSu := int32(len(voteVal.votesSuccessMap))
+	voteAmountFal := int32(len(voteVal.votesFailedMap))
+	succ := voteAmountSu >= totalNods
+	fail := voteAmountFal >= totalNods
+	var code string
+	var msg string
+	if succ || fail {
+		if succ {
+			code = code1000
+			msg = msg1000
+		}
+		if fail {
+			code = code1002
+			msg = msg1002
+		}
+		sql := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
+			s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txid)
+		serviceLog.Info("update sql", sql)
+
+		_, err := s.dh.Db.Exec(sql) //更新状态
+		if err == nil {
+			serviceLog.Info("txid write db success", txid)
+			tarnsJavaReq := &ClientTransactionJavaReq{}
+			tarnsJavaReq.TxId = txid
+			tarnsJavaReq.ChainId = voteVal.chainId
+			tarnsJavaReq.Ecode = code
+			tarnsJavaReq.Emessage = msg
+			ClientTransactionJavaReqChan <- tarnsJavaReq //传进通道 调用 response服务端方法
+			TxidsMap.Delete(txid)                        //成功 删除缓存
+		} else {
+			serviceLog.Error("txid write db failed", txid)
+		}
+	}
+
 }
 
 /*func (s *server) GoChainRequestCountEvent(ctx context.Context) (*sv.GoEventService_GoChainRequestEventClient, error) {
@@ -346,7 +557,21 @@ func (s *server) init() {
 	}
 	s.ec = evcf
 	s.addressIdMap = make(map[string]string) //初始化缓存map
-	TxidsMap = make(map[string]VoteAccount)  //缓存消息票数的队列
+	TxidsMap = sync.Map{}                    //缓存消息票数的队列
+	ClientTransactionJavaReqChan = make(chan *ClientTransactionJavaReq, 20)
+	s.updateIspushedChan = make(chan *UpdateIspushedsql, 20)
+}
+
+func (s *server) updateIspushed() {
+	for {
+		select {
+		case upush := <-s.updateIspushedChan:
+			_, err := s.dh.Db.Exec(upush.sql) //更新状态
+			if err != nil {
+				serviceLog.Info("upush.sql update fail", upush.sql)
+			}
+		}
+	}
 }
 
 /**
@@ -359,6 +584,7 @@ func (s *server) init() {
 func (s *server) createTable() {
 	//初始化server struct
 	s.init()
+
 	fmt.Println("init success")
 	dh := s.dh
 	//建表 events_client_address
@@ -389,6 +615,10 @@ func (s *server) createTable() {
 	}
 	fmt.Println("createTable success")
 	serviceLog.Info("createTable success")
+	// 启动协成监听mysql push更新
+	go func() {
+		s.updateIspushed()
+	}()
 }
 
 func main() {

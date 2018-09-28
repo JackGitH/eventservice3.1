@@ -15,12 +15,9 @@ service GoEventService{
     rpc GoClientRequestEvent(ClientTransactionReq)returns(ClientTransactionRes){}
     rpc GoChainRequestEvent(stream ChainTranscationReq)returns(stream ChainTranscationRes){}
     rpc GoChainRequestCountEvent(stream ChainTranscationAccountReq)returns(stream ChainTranscationAccountRes){}
+    rpc GoJavaRequestEvent(stream ClientTransactionJavaRes)returns(stream ClientTransactionJavaReq){}
 }
 
-// java为服务端 与事件服务器交互
-service JavaEventService{
-    rpc JavaClientRequestEvent(stream ClientTransactionJavaReq)returns(stream ClientTransactionJavaRes){}
-}
 
 //客户端注册地址
 message ClientRegisterAddressReq{
@@ -71,6 +68,7 @@ message ChainTranscationAccountReq{
     bool IsSuccessReq =2;
     string CodeReq = 3;
     string MessageReq = 4;
+    string NodeIdReq = 5;
 }
 
 //服务端对链请求交易返回值
@@ -84,6 +82,7 @@ message ClientTransactionJavaReq{
     string TxIdRes = 1;
     string CodeRes = 2;
     string MessageRes = 3;
+    string ChainIdRes = 4;
 }
 
 
