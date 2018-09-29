@@ -1,5 +1,4 @@
-DROP TABLE IF EXISTS `events_client_address`;
-CREATE TABLE `events_client_address` (
+CREATE TABLE IF NOT EXISTS `events_client_address` (
   `ID` char(64) NOT NULL,
   `ECLIENTIP` char(64) NOT NULL,
   `ECLIENTPORT` char(64) NOT NULL,

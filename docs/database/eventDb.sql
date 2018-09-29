@@ -1,5 +1,4 @@
-DROP TABLE IF EXISTS `events_msg`;
-CREATE TABLE `events_msg` (
+CREATE TABLE IF NOT EXISTS `events_msg` (
   `TXID` char(64) NOT NULL,
   `ECODE` char(64) NOT NULL,
   `EMESSAGE` VARCHAR(512) NOT NULL,

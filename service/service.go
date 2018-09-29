@@ -34,12 +34,17 @@ const (
 	code1003 = "1003"
 	code1004 = "1004"
 	code1005 = "1005"
-	msg1000  = "交易成功"
-	msg1001  = "交易进行中"
-	msg1002  = "交易失败"
-	msg1003  = "交易不存在"
-	msg1004  = "交易异常"
-	msg1005  = "未注册，请求失败"
+	code1006 = "1006"
+	code1007 = "1007"
+
+	msg1000 = "交易成功"
+	msg1001 = "交易进行中"
+	msg1002 = "交易失败" //AppProcess Fail uchains返回码和这里对应
+	msg1003 = "交易不存在"
+	msg1004 = "交易异常"
+	msg1005 = "未注册，请求失败"
+	msg1006 = "共识前检查异常" //BeforeConsCheck Fail
+	msg1007 = "共识后检查异常" //AfterConsCheckAndUpdateData Fail
 
 	msgRegist01 = "该ip-port已注册"
 	msgRegist02 = "注册成功"
@@ -55,6 +60,7 @@ type server struct {
 	dh                 *db.DbHandler
 	addressIdMap       map[string]string
 	updateIspushedChan chan *UpdateIspushedsql
+	switchButton       bool
 }
 type UpdateIspushedsql struct {
 	sql string
@@ -99,6 +105,10 @@ const (
 	TOTALNODES  ASSETFIELDNAME = "TOTALNODES"
 	ISPUSHED    ASSETFIELDNAME = "ISPUSHED"
 )
+
+type MsgHandler interface {
+	SendToJavaMsg(javaMsg *sv.ClientTransactionJavaReq) error
+}
 
 /**
 * @Title: service.go
@@ -376,7 +386,7 @@ func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainReques
 
 		} else {
 
-			voteVal := VoteAccount(value)
+			voteVal := value.(VoteAccount)
 			totalNods := voteVal.totalNodes * constAmount
 			var code string
 			var msg string
@@ -408,6 +418,7 @@ func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainReques
 					}
 				}
 			} else {
+
 				voteVal.votesFailedMap[txidreq] = nodeidreq
 				TxidsMap.Store(txidreq, voteVal)
 				voteAmount := int32(len(voteVal.votesFailedMap))
@@ -451,35 +462,70 @@ func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainReques
  */
 func (s *server) GoJavaRequestEvent(stream sv.GoEventService_GoJavaRequestEventServer) error {
 	for {
-		select {
+		fmt.Println("before switchButton")
+		if !s.switchButton {
+
+			go func() {
+				time.Sleep(20)
+				s.SendToJavaMsg(stream)
+			}()
+		}
+
 		//tx 成功或失败  推送消息
-		case cj := <-ClientTransactionJavaReqChan:
-			req, err := stream.Recv()
-			if err == io.EOF {
-				fmt.Println("read done")
-				return err
-			}
+		req, err := stream.Recv()
+		if err == io.EOF {
+			fmt.Println("read done")
+			return err
+		}
+		if err != nil {
+			fmt.Println("Server Stream ERR", err)
+			serviceLog.Error("Server Stream recv err", err)
+			return err
+		}
+		if req != nil {
+			serviceLog.Info("GoJavaRequestEvent send txid success:", req.TxIdRes)
+			sqlFinal := fmt.Sprintf("update %s set %s = '%d'  where %s = '%s'",
+				s.ec.Config.EventmsgtableName, ISPUSHED, 1, TXID, req.TxIdRes)
+			serviceLog.Info("update ispushed sqlFinal", sqlFinal)
+			usql := &UpdateIspushedsql{}
+			usql.sql = sqlFinal
+			s.updateIspushedChan <- usql //异步处理sqlupdate ispushed
+		}
+
+	}
+
+}
+
+/**
+* @Title: service.go
+* @Description: SendToJavaMsg  uchains 交易成功 推送消息到java服务器
+* @author ghc
+* @date 9/29/18 10:47 AM
+* @version V1.0
+ */
+func (s *server) SendToJavaMsg(stream sv.GoEventService_GoJavaRequestEventServer) error {
+	s.switchButton = true
+		fmt.Println("SendToJavaMsg has send")
+		for i := 0; i < 10; i++ {
+			err := stream.Send(&sv.ClientTransactionJavaReq{"11356456", "1001", "发送成功", "coupon"})
 			if err != nil {
-				fmt.Println("Server Stream ERR", err)
-				serviceLog.Error("Server Stream recv err", err)
-				return err
-			}
-			if req != nil {
-				serviceLog.Info("GoJavaRequestEvent send txid success:", req.TxIdRes)
-				sqlFinal := fmt.Sprintf("update %s set %s = '%s'  where %s = '%s'",
-					s.ec.Config.EventmsgtableName, ISPUSHED, 1, TXID, req.TxIdRes)
-				serviceLog.Info("update ispushed sqlFinal", sqlFinal)
-				usql := &UpdateIspushedsql{}
-				usql.sql = sqlFinal
-				s.updateIspushedChan <- usql
-			}
-			err = stream.Send(&sv.ClientTransactionJavaReq{cj.TxId, cj.Ecode, cj.Emessage, cj.ChainId})
-			if err != nil {
-				serviceLog.Error(cj.TxId + ":Server Stream send fail")
+				serviceLog.Error("11356456"+":Server Stream send fail erro", err)
 				return err
 			}
 		}
-	}
+
+		return nil
+/*	for {
+		select {
+		//tx 成功或失败  推送消息
+		case cj := <-ClientTransactionJavaReqChan:
+			err := stream.Send(&sv.ClientTransactionJavaReq{cj.TxId, cj.Ecode, cj.Emessage, cj.ChainId})
+			if err != nil {
+				serviceLog.Error(cj.TxId+":Server Stream send fail erro", err)
+				return err
+			}
+		}
+	}*/
 
 }
 
@@ -492,7 +538,7 @@ func (s *server) GoJavaRequestEvent(stream sv.GoEventService_GoJavaRequestEventS
  */
 func TaskEvent(txid string, s *server) {
 	value, _ := TxidsMap.Load(txid) //map 中不存在，
-	voteVal := VoteAccount(value)
+	voteVal := value.(VoteAccount)
 	totalNods := voteVal.totalNodes * constAmount
 	voteAmountSu := int32(len(voteVal.votesSuccessMap))
 	voteAmountFal := int32(len(voteVal.votesFailedMap))
@@ -556,7 +602,7 @@ func (s *server) init() {
 		serviceLog.Error("newEventConfig fail", err)
 	}
 	s.ec = evcf
-	s.addressIdMap = make(map[string]string) //初始化缓存map
+	s.addressIdMap = make(map[string]string) //初始化缓存Ip地址map
 	TxidsMap = sync.Map{}                    //缓存消息票数的队列
 	ClientTransactionJavaReqChan = make(chan *ClientTransactionJavaReq, 20)
 	s.updateIspushedChan = make(chan *UpdateIspushedsql, 20)
@@ -620,6 +666,36 @@ func (s *server) createTable() {
 		s.updateIspushed()
 	}()
 }
+
+//todo  抽象出公共部分  以后完善
+/*func (s *server) commonCountEventHandle(succc bool, fail bool, txidreq string, voteVal VoteAccount, nodeidreq string, totalNods int32, stream sv.GoEventService_GoChainRequestCountEventServer) {
+	voteVal.votesSuccessMap[txidreq] = nodeidreq
+	TxidsMap.Store(txidreq, voteVal)
+	voteAmount := int32(len(voteVal.votesSuccessMap))
+	succ := voteAmount >= totalNods
+	if succ {
+		code = code1000
+		msg = msg1000
+		sqlFinal := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
+			s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txidreq)
+		_, err := s.dh.Db.Exec(sqlFinal)
+		if err != nil {
+			serviceLog.Error("GoChainRequestCountEvent db set ecode fail txid", txidreq)
+		} else {
+			tarnsJavaReq := &ClientTransactionJavaReq{}
+			tarnsJavaReq.TxId = txidreq
+			tarnsJavaReq.ChainId = voteVal.chainId
+			tarnsJavaReq.Ecode = code
+			tarnsJavaReq.Emessage = msg
+			ClientTransactionJavaReqChan <- tarnsJavaReq
+			err = stream.Send(&sv.ChainTranscationAccountRes{txidreq, true})
+			if err != nil {
+				serviceLog.Error(txidreq + "Server Stream send fail")
+				return err
+			}
+		}
+	}
+}*/
 
 func main() {
 	serv := &server{}
