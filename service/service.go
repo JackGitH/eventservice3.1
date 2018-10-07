@@ -340,10 +340,16 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 			voteMap.totalNodes = reqTotalNotes
 			voteMap.votesSuccessMap = make(map[string]string)
 			voteMap.votesFailedMap = make(map[string]string)
-			voteMap.txtask = time.AfterFunc(120, func() {
+			voteMap.txtask = time.AfterFunc(120*time.Second, func() {
 				TaskEvent(reqTxId, s)
 			})
 			TxidsMap.Store(reqTxId, voteMap) //缓存txid和票数
+			valu, bool := TxidsMap.Load(reqTxId)
+			if bool {
+				fmt.Println("TxidsMap value", valu)
+			}
+
+			serviceLog.Info("TxidsMap", TxidsMap)
 		}
 		err = stream.Send(&sv.ChainTranscationRes{TxIdRes: req.TxIdReq, IsReceivedRes: true})
 		if err != nil {
@@ -364,6 +370,7 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainRequestCountEventServer) error {
 	for {
 		req, err := stream.Recv()
+		fmt.Println("enter GoChainRequestCountEvent req", req)
 		if err == io.EOF {
 			fmt.Println("read done")
 			return nil
@@ -380,30 +387,42 @@ func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainReques
 		issuccreq := req.IsSuccessReq
 		nodeidreq := req.NodeIdReq
 		value, ok := TxidsMap.Load(txidreq) //map 中不存在，
+		fmt.Println("vvvalue:", value, "ok:", ok)
 		if !ok {
-
+			fmt.Println("hash handle over or txid not exit", txidreq)
 			serviceLog.Warning(txidreq, "hash handle over or txid not exit")
 
 		} else {
 
 			voteVal := value.(VoteAccount)
+			fmt.Println("votalVal", voteVal)
+			fmt.Println("voteVal.totalNodes", voteVal.totalNodes)
+			fmt.Println("voteVal.totalNodes*1/3", voteVal.totalNodes*constAmount)
 			totalNods := voteVal.totalNodes * constAmount
+			fmt.Println("totalNods", totalNods)
 			var code string
 			var msg string
 			if issuccreq {
-				voteVal.votesSuccessMap[txidreq] = nodeidreq
+				voteVal.votesSuccessMap[nodeidreq] = txidreq //nodeId 作为key 避免票数重复
 				TxidsMap.Store(txidreq, voteVal)
+				value1, ok1 := TxidsMap.Load(txidreq) //map 中不存在，
+				fmt.Println("value1:", value1, "ok1:", ok1)
 				voteAmount := int32(len(voteVal.votesSuccessMap))
+				fmt.Println("voteAmount", voteAmount)
 				succ := voteAmount >= totalNods
+				fmt.Println("succ", succ)
 				if succ {
 					code = code1000
 					msg = msg1000
 					sqlFinal := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
 						s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txidreq)
+					fmt.Println("GoChainRequestCountEvent sqlFinal", sqlFinal)
 					_, err := s.dh.Db.Exec(sqlFinal)
 					if err != nil {
+						fmt.Println("GoChainRequestCountEvent sqlFinal err", err)
 						serviceLog.Error("GoChainRequestCountEvent db set ecode fail txid", txidreq)
 					} else {
+						TxidsMap.Delete(txidreq)
 						tarnsJavaReq := &ClientTransactionJavaReq{}
 						tarnsJavaReq.TxId = txidreq
 						tarnsJavaReq.ChainId = voteVal.chainId
@@ -419,7 +438,7 @@ func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainReques
 				}
 			} else {
 
-				voteVal.votesFailedMap[txidreq] = nodeidreq
+				voteVal.votesFailedMap[nodeidreq] = txidreq
 				TxidsMap.Store(txidreq, voteVal)
 				voteAmount := int32(len(voteVal.votesFailedMap))
 				fail := voteAmount >= totalNods
@@ -432,6 +451,7 @@ func (s *server) GoChainRequestCountEvent(stream sv.GoEventService_GoChainReques
 					if err != nil {
 						serviceLog.Error("GoChainRequestCountEvent db set ecode fail txid", txidreq)
 					} else {
+						TxidsMap.Delete(txidreq)
 						tarnsJavaReq := &ClientTransactionJavaReq{}
 						tarnsJavaReq.TxId = txidreq
 						tarnsJavaReq.ChainId = voteVal.chainId
@@ -483,13 +503,7 @@ func (s *server) GoJavaRequestEvent(stream sv.GoEventService_GoJavaRequestEventS
 			return err
 		}
 		if req != nil {
-			serviceLog.Info("GoJavaRequestEvent send txid success:", req.TxIdRes)
-			sqlFinal := fmt.Sprintf("update %s set %s = '%d'  where %s = '%s'",
-				s.ec.Config.EventmsgtableName, ISPUSHED, 1, TXID, req.TxIdRes)
-			serviceLog.Info("update ispushed sqlFinal", sqlFinal)
-			usql := &UpdateIspushedsql{}
-			usql.sql = sqlFinal
-			s.updateIspushedChan <- usql //异步处理sqlupdate ispushed
+
 		}
 
 	}
@@ -505,17 +519,17 @@ func (s *server) GoJavaRequestEvent(stream sv.GoEventService_GoJavaRequestEventS
  */
 func (s *server) SendToJavaMsg(stream sv.GoEventService_GoJavaRequestEventServer) error {
 	s.switchButton = true
-		fmt.Println("SendToJavaMsg has send")
-		for i := 0; i < 10; i++ {
-			err := stream.Send(&sv.ClientTransactionJavaReq{"11356456", "1001", "发送成功", "coupon"})
-			if err != nil {
-				serviceLog.Error("11356456"+":Server Stream send fail erro", err)
-				return err
+	/*		fmt.Println("SendToJavaMsg has send")
+			for i := 0; i < 10; i++ {
+				err := stream.Send(&sv.ClientTransactionJavaReq{"11356456", "1001", "发送成功", "coupon"})
+				if err != nil {
+					serviceLog.Error("11356456"+":Server Stream send fail erro", err)
+					return err
+				}
 			}
-		}
 
-		return nil
-/*	for {
+			return nil*/
+	for {
 		select {
 		//tx 成功或失败  推送消息
 		case cj := <-ClientTransactionJavaReqChan:
@@ -523,9 +537,17 @@ func (s *server) SendToJavaMsg(stream sv.GoEventService_GoJavaRequestEventServer
 			if err != nil {
 				serviceLog.Error(cj.TxId+":Server Stream send fail erro", err)
 				return err
+			} else {
+				serviceLog.Info("GoJavaRequestEvent send txid success:", cj.TxId)
+				sqlFinal := fmt.Sprintf("update %s set %s = '%d'  where %s = '%s'",
+					s.ec.Config.EventmsgtableName, ISPUSHED, 1, TXID, cj.TxId)
+				serviceLog.Info("update ispushed sqlFinal", sqlFinal)
+				usql := &UpdateIspushedsql{}
+				usql.sql = sqlFinal
+				s.updateIspushedChan <- usql //异步处理sqlupdate ispushed
 			}
 		}
-	}*/
+	}
 
 }
 
@@ -537,40 +559,45 @@ func (s *server) SendToJavaMsg(stream sv.GoEventService_GoJavaRequestEventServer
 * @version V1.0
  */
 func TaskEvent(txid string, s *server) {
-	value, _ := TxidsMap.Load(txid) //map 中不存在，
-	voteVal := value.(VoteAccount)
-	totalNods := voteVal.totalNodes * constAmount
-	voteAmountSu := int32(len(voteVal.votesSuccessMap))
-	voteAmountFal := int32(len(voteVal.votesFailedMap))
-	succ := voteAmountSu >= totalNods
-	fail := voteAmountFal >= totalNods
-	var code string
-	var msg string
-	if succ || fail {
-		if succ {
-			code = code1000
-			msg = msg1000
-		}
-		if fail {
-			code = code1002
-			msg = msg1002
-		}
-		sql := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
-			s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txid)
-		serviceLog.Info("update sql", sql)
+	value, ok := TxidsMap.Load(txid) //map 中不存在，
+	if ok {
+		voteVal := value.(VoteAccount)
+		totalNods := voteVal.totalNodes * constAmount
+		voteAmountSu := int32(len(voteVal.votesSuccessMap))
+		voteAmountFal := int32(len(voteVal.votesFailedMap))
+		succ := voteAmountSu >= totalNods
+		fail := voteAmountFal >= totalNods
+		serviceLog.Info("totalNods:", totalNods, "voteAmountSu:", voteAmountSu)
+		fmt.Println("totalNods", totalNods)
+		fmt.Println("voteAmountSu", voteAmountSu)
+		var code string
+		var msg string
+		if succ || fail {
+			if succ {
+				code = code1000
+				msg = msg1000
+			}
+			if fail {
+				code = code1002
+				msg = msg1002
+			}
+			sql := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
+				s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txid)
+			serviceLog.Info("update sql", sql)
 
-		_, err := s.dh.Db.Exec(sql) //更新状态
-		if err == nil {
-			serviceLog.Info("txid write db success", txid)
-			tarnsJavaReq := &ClientTransactionJavaReq{}
-			tarnsJavaReq.TxId = txid
-			tarnsJavaReq.ChainId = voteVal.chainId
-			tarnsJavaReq.Ecode = code
-			tarnsJavaReq.Emessage = msg
-			ClientTransactionJavaReqChan <- tarnsJavaReq //传进通道 调用 response服务端方法
-			TxidsMap.Delete(txid)                        //成功 删除缓存
-		} else {
-			serviceLog.Error("txid write db failed", txid)
+			_, err := s.dh.Db.Exec(sql) //更新状态
+			if err == nil {
+				serviceLog.Info("txid write db success", txid)
+				tarnsJavaReq := &ClientTransactionJavaReq{}
+				tarnsJavaReq.TxId = txid
+				tarnsJavaReq.ChainId = voteVal.chainId
+				tarnsJavaReq.Ecode = code
+				tarnsJavaReq.Emessage = msg
+				ClientTransactionJavaReqChan <- tarnsJavaReq //传进通道 调用 response服务端方法
+				TxidsMap.Delete(txid)                        //成功 删除缓存
+			} else {
+				serviceLog.Error("txid write db failed", txid)
+			}
 		}
 	}
 
