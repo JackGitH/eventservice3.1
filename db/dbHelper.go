@@ -2,11 +2,11 @@ package db
 
 import (
 	"database/sql"
+	"eventservice/configMgr"
 	"fmt"
 	_ "github.com/go-sql-driver/MySQL"
 	"github.com/op/go-logging"
 	"io/ioutil"
-	"protocdemo/configMgr"
 )
 
 type DbHandler struct {
@@ -41,6 +41,7 @@ func (dh *DbHandler) GetDbHandler() (db *DbHandler, err error) {
 		return nil, err
 	}
 	//建库
+	// todo linux 下目录使用 docs/database/createDataBase.sql
 	sqlBytes, err := ioutil.ReadFile("docs/database/createDataBase.sql")
 	if err != nil {
 		registerDbLog.Error("ioutil.ReadFile createDataBase.sql err", err)

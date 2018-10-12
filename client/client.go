@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"golang.org/x/net/context"
 
+	pb "eventservice/example/helloworld"
 	"google.golang.org/grpc"
 	"io"
-	pb "protocdemo/example/helloworld"
 )
 
 const (

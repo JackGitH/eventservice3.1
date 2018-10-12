@@ -13,10 +13,10 @@ import (
 	"io/ioutil"
 
 	"encoding/hex"
+	"eventservice/configMgr"
+	"eventservice/db"
+	sv "eventservice/example/serverproto"
 	"io"
-	"protocdemo/configMgr"
-	"protocdemo/db"
-	sv "protocdemo/example/serverproto"
 	"sync"
 	"time"
 )
@@ -867,6 +867,7 @@ func (s *server) createTable() {
 	fmt.Println("init success")
 	dh := s.dh
 	//建表 events_client_address
+	// todo linux 下目录使用 ../docs/database/registerDb.sql
 	sqlBytes, err := ioutil.ReadFile("docs/database/registerDb.sql")
 	if err != nil {
 		serviceLog.Error("ioutil.ReadFile sqlBytes err", err)
@@ -880,6 +881,7 @@ func (s *server) createTable() {
 		return
 	}
 	//建表 events_msg
+	// todo linux 下目录使用 ../docs/database/eventDb.sql
 	sqlBytes2, err := ioutil.ReadFile("docs/database/eventDb.sql")
 	if err != nil {
 		serviceLog.Error("ioutil.ReadFile sqlBytes2 err", err)
