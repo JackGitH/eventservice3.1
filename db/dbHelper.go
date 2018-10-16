@@ -7,6 +7,7 @@ import (
 	_ "github.com/go-sql-driver/MySQL"
 	"github.com/op/go-logging"
 	"io/ioutil"
+	"runtime"
 )
 
 type DbHandler struct {
@@ -36,13 +37,21 @@ func (dh *DbHandler) GetDbHandler() (db *DbHandler, err error) {
 
 	dbh, err := sql.Open("mysql", userName+":"+passwd+"@tcp("+ip+":"+port+")/"+"?charset=utf8&multiStatements=true")
 
+	//dbh.Ping()
+
 	if err != nil {
 		fmt.Print("err", err)
 		return nil, err
 	}
 	//建库
 	// todo linux 下目录使用 docs/database/createDataBase.sql
-	sqlBytes, err := ioutil.ReadFile("docs/database/createDataBase.sql")
+	sys := string(runtime.GOOS) // 判断操作系统
+	var sqlBytes []byte
+	if sys == "windows" {
+		sqlBytes, err = ioutil.ReadFile("docs/database/createDataBase.sql")
+	} else {
+		sqlBytes, err = ioutil.ReadFile("../docs/database/createDataBase.sql")
+	}
 	if err != nil {
 		registerDbLog.Error("ioutil.ReadFile createDataBase.sql err", err)
 		fmt.Print("ioutil.ReadFile createDataBase.sql fail")
@@ -61,6 +70,9 @@ func (dh *DbHandler) GetDbHandler() (db *DbHandler, err error) {
 	fmt.Println("createDataBase success")
 	//dataBaseName 要与sql语句名称一致
 	dbhBase, err := sql.Open("mysql", userName+":"+passwd+"@tcp("+ip+":"+port+")/"+dataBaseName+"?charset=utf8&multiStatements=true")
+	dbhBase.SetConnMaxLifetime(0)
+	dbhBase.SetMaxOpenConns(50) // 最大连接数
+	dbhBase.SetMaxIdleConns(50) // 空闲连接数
 	if err != nil {
 		registerDbLog.Error("sql.Open dbhBase err", err)
 		fmt.Print("sql.Open dbhBase err fail")

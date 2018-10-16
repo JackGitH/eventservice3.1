@@ -1,0 +1,3 @@
+20181016150334.923 [service] Init -> INFO 001 aaaa
+20181016150334.935 [registerDb] GetDbHandler -> INFO 002 createDataBase success
+20181016150334.958 [service] createTable -> INFO 003 createTable success

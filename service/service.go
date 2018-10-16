@@ -16,12 +16,20 @@ import (
 	"eventservice/configMgr"
 	"eventservice/db"
 	sv "eventservice/example/serverproto"
+	logFactory "eventservice/logFactory"
 	"io"
+	"runtime"
 	"sync"
 	"time"
 )
 
 var serviceLog = logging.MustGetLogger("service")
+
+type Password string
+
+func (p Password) Redacted() interface{} {
+	return logging.Redact(string(p))
+}
 
 const (
 	port = ":8852"
@@ -90,10 +98,10 @@ var TxidsMap *sync.Map
 
 // 缓存交易情况的map 中的value
 type VoteAccount struct {
-	txid            string
-	totalNodes      int32
-	srsu            sync.RWMutex
-	srfa            sync.RWMutex
+	txid       string
+	totalNodes int32
+	//srsu            sync.RWMutex
+	//srfa            sync.RWMutex
 	votesSuccessMap map[string]string
 	votesFailedMap  map[string]string
 	txtask          *time.Timer
@@ -292,9 +300,6 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 		}*/
 	for {
 		req, err := stream.Recv()
-		_, ok := TxidsMap.Load(req.TxIdReq) //先缓存查询 若不存在，则取查询数据库
-		fmt.Println("--------A-----------------------", s.totalEventTxid)
-		fmt.Println("--------B-----------------------", s.totalEventCountTxid)
 		if err == io.EOF {
 			fmt.Println("read done")
 			return nil
@@ -305,11 +310,14 @@ func (s *server) GoChainRequestEvent(stream sv.GoEventService_GoChainRequestEven
 			stream.Send(&sv.ChainTranscationRes{TxIdRes: "", IsReceivedRes: false})
 			return err
 		}
+		_, ok := TxidsMap.Load(req.TxIdReq) //先缓存查询 若不存在，则取查询数据库
+		fmt.Println("--------A-----------------------", s.totalEventTxid)
+		fmt.Println("--------B-----------------------", s.totalEventCountTxid)
 		if !ok {
-			s.totalEventTxid++
 			gasc := &GoChainRequestReqAsc{}
 			gasc.req = req
 			GoChainRequestReqAscChan <- gasc
+			s.totalEventTxid++
 		}
 		err = stream.Send(&sv.ChainTranscationRes{TxIdRes: req.TxIdReq, IsReceivedRes: true})
 		if err != nil {
@@ -331,6 +339,7 @@ func (s *server) GoChainRequestAscEvent() error {
 	for {
 		select {
 		case asc := <-GoChainRequestReqAscChan:
+			fmt.Println("--------AAA-----------------------", s.totalEventTxid)
 			req := asc.req
 			fmt.Println("req: ", req)
 			reqTxId := req.TxIdReq
@@ -496,9 +505,9 @@ func (s *server) GoChainRequestCountAscEvent() error {
 				var msg string
 				if issuccreq {
 					//写锁
-					voteVal.srsu.Lock()
+					//voteVal.srsu.Lock()
 					voteVal.votesSuccessMap[nodeidreq] = txidreq //nodeId 作为key 避免票数重复
-					voteVal.srsu.Unlock()
+					//voteVal.srsu.Unlock()
 
 					TxidsMap.Store(txidreq, voteVal)
 
@@ -522,6 +531,7 @@ func (s *server) GoChainRequestCountAscEvent() error {
 							sqlFinal := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
 								s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txidreq)
 							fmt.Println("GoChainRequestCountEvent sqlFinal", sqlFinal)
+							serviceLog.Info("GoChainRequestCountEvent sqlFinal", sqlFinal)
 							_, err := s.dh.Db.Exec(sqlFinal)
 							if err != nil {
 								fmt.Println("GoChainRequestCountEvent sqlFinal err", err)
@@ -546,9 +556,9 @@ func (s *server) GoChainRequestCountAscEvent() error {
 					}
 				} else {
 					//写锁
-					voteVal.srfa.Lock()
+					//voteVal.srfa.Lock()
 					voteVal.votesFailedMap[nodeidreq] = txidreq
-					voteVal.srfa.Unlock()
+					//voteVal.srfa.Unlock()
 					TxidsMap.Store(txidreq, voteVal)
 					voteAmount := int32(len(voteVal.votesFailedMap))
 					fail := voteAmount >= totalNods
@@ -558,6 +568,7 @@ func (s *server) GoChainRequestCountAscEvent() error {
 						sqlFinal := fmt.Sprintf("update %s set %s = '%s' ,%s = '%s' where %s = '%s'",
 							s.ec.Config.EventmsgtableName, ECODE, code, EMESSAGE, msg, TXID, txidreq)
 						fmt.Println("GoChainRequestCountEvent sqlFinal", sqlFinal)
+						serviceLog.Info("GoChainRequestCountEvent sqlFinal", sqlFinal)
 						_, err := s.dh.Db.Exec(sqlFinal)
 						if err != nil {
 							serviceLog.Error("GoChainRequestCountEvent db set ecode fail txid", txidreq)
@@ -846,6 +857,7 @@ func (s *server) updateIspushed() {
 			if err != nil {
 				serviceLog.Info("upush.sql update fail", upush.sql)
 			} else {
+				// 若失败了 则放回队列
 				time.Sleep(1 * time.Second)
 				s.updateIspushedChan <- upush
 			}
@@ -868,7 +880,14 @@ func (s *server) createTable() {
 	dh := s.dh
 	//建表 events_client_address
 	// todo linux 下目录使用 ../docs/database/registerDb.sql
-	sqlBytes, err := ioutil.ReadFile("docs/database/registerDb.sql")
+	sys := string(runtime.GOOS) // 判断操作系统
+	var sqlBytes []byte
+	var err error
+	if sys == "windows" {
+		sqlBytes, err = ioutil.ReadFile("docs/database/registerDb.sql")
+	} else {
+		sqlBytes, err = ioutil.ReadFile("../docs/database/registerDb.sql")
+	}
 	if err != nil {
 		serviceLog.Error("ioutil.ReadFile sqlBytes err", err)
 		return
@@ -882,7 +901,12 @@ func (s *server) createTable() {
 	}
 	//建表 events_msg
 	// todo linux 下目录使用 ../docs/database/eventDb.sql
-	sqlBytes2, err := ioutil.ReadFile("docs/database/eventDb.sql")
+	var sqlBytes2 []byte
+	if sys == "windows" {
+		sqlBytes2, err = ioutil.ReadFile("docs/database/eventDb.sql")
+	} else {
+		sqlBytes2, err = ioutil.ReadFile("../docs/database/eventDb.sql")
+	}
 	if err != nil {
 		serviceLog.Error("ioutil.ReadFile sqlBytes2 err", err)
 		return
@@ -934,6 +958,8 @@ func (s *server) createTable() {
 }*/
 
 func main() {
+	// 初始化日志
+	logFactory.Init()
 	serv := &server{}
 	serv.createTable()
 	lis, err := net.Listen("tcp", port)
