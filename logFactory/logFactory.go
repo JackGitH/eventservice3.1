@@ -27,7 +27,6 @@ import (
 
 	"github.com/op/go-logging"
 	"github.com/spf13/viper"
-	//"uchains/common"
 )
 
 // A logger to log logging logs!
@@ -44,23 +43,9 @@ const (
 	_VER string = "1.0.2"
 )
 const (
-	NETWORK           string = "network"
-	LEDGER            string = "ledger"
-	REST              string = "rest"
-	MINEPOOL          string = "minPool"
-	WORKER            string = "worker"
-	DIFFICULTYMANAGER string = "difficultyManager"
-	CHAINSMANAGER     string = "chainsManager"
-	QUEUE             string = "queue"
-	POW               string = "PoW"
-	SYNC              string = "sync"
-	ORIGINALBATCHS    string = "originalbatchs"
-	TXMANAGER         string = "txManager"
-	SECURITY          string = "security"
-	BLOCKINFO         string = "blockInfo"
-	FORKINFO          string = "forkInfo"
-	APP               string = "app"
-	UIOC              string = "uioc"
+	REST string = "rest"
+	SYNC string = "sync"
+	APP  string = "app"
 )
 
 type LEVEL int32
@@ -314,12 +299,6 @@ func (f *_FILE) resetConnect() {
 	callback(f.dir+"/"+f.filename, Config)
 }
 
-func ResetLevel(level, model string) {
-	if level == "" {
-		level = "info"
-	}
-	logging.SetLevel(GetLoggingLevel(level), model)
-}
 func GetLoggingLevel(level string) logging.Level {
 
 	switch level {
@@ -413,90 +392,53 @@ func fileCheck() {
 	}
 }
 
-/*// LoggingInit is a 'hook' called at the beginning of command processing to
-// parse logging-related options specified either on the command-line or in
-// config files.  Command-line options take precedence over config file
-// options, and can also be passed as suitably-named environment variables. To
-// change module logging levels at runtime call `logging.SetLevel(level,
-// module)`.  To debug this routine include logging=debug as the first
-// term of the logging specification.
-func LoggingInit(command string) {
-	// Parse the logging specification in the form
-	//     [<module>[,<module>...]=]<level>[:[<module>[,<module>...]=]<level>...]
-	defaultLevel := loggingDefaultLevel
-	var err error
-	spec := viper.GetString("logging_level")
-	if spec == "" {
-		spec = viper.GetString("logging." + command)
-	}
-	if spec != "" {
-		fields := strings.Split(spec, ":")
-		for _, field := range fields {
-			split := strings.Split(field, "=")
-			switch len(split) {
-			case 1:
-				// Default level
-				defaultLevel, err = logging.LogLevel(field)
-				if err != nil {
-					loggingLogger.Warningf("Logging level '%s' not recognized, defaulting to %s : %s", field, loggingDefaultLevel, err)
-					defaultLevel = loggingDefaultLevel // NB - 'defaultLevel' was overwritten
-				}
-			case 2:
-				// <module>[,<module>...]=<level>
-				if level, err := logging.LogLevel(split[1]); err != nil {
-					loggingLogger.Warningf("Invalid logging level in '%s' ignored", field)
-				} else if split[0] == "" {
-					loggingLogger.Warningf("Invalid logging override specification '%s' ignored - no module specified", field)
-				} else {
-					modules := strings.Split(split[0], ",")
-					for _, module := range modules {
-						logging.SetLevel(level, module)
-						loggingLogger.Debugf("Setting logging level for module '%s' to %s", module, level)
-					}
-				}
-			default:
-				loggingLogger.Warningf("Invalid logging override '%s' ignored; Missing ':' ?", field)
-			}
-		}
-	}
-
-	// Set the default logging level for all modules
-	logging.SetLevel(defaultLevel, "")
-	loggingLogger.Debugf("Setting default logging level to %s for command '%s'", defaultLevel, command)
-}*/
-
-// DefaultLoggingLevel returns the fallback value for loggers to use if parsing fails
-func DefaultLoggingLevel() logging.Level {
-	return loggingDefaultLevel
-}
-
 // Initiate 'leveled' logging to stderr.
+var Switcha bool
 
 func Init() {
+	Switcha = true
+	t := time.Now()
+	tim := t.String()[0:10] + "_" + t.String()[11:13]
+	for {
 
-	format := logging.MustStringFormatter(
-		"%{color}%{time:20060102150405.000} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}",
-	)
-	logFileDir := "loggings"
-	Mkdirlog(logFileDir)
-	logFile := "eventserver.log"
+		time.Sleep(2 * time.Second)
+		t1 := time.Now()
+		tim1 := t1.String()[0:10] + "_" + t1.String()[11:13]
 
-	logs := logFileDir + "/" + logFile
+		if tim != tim1 || Switcha {
+			logFileOld := "eventserver.log"
+			logFile := "eventserver.log." + tim
+			if Switcha {
+				logFile = "eventserver.log"
+			}
+			Switcha = false
+			tim = tim1
+			format := logging.MustStringFormatter(
+				"%{color}%{time:20060102150405.000} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}",
+			)
+			logFileDir := "loggings"
+			Mkdirlog(logFileDir)
+			var logs string
+			var logsOld string
 
-	logIo, err := os.OpenFile(logs, os.O_CREATE|os.O_WRONLY, 0777)
-	if err != nil {
-		loggingLogger.Errorf("open log file err %s", err)
+			logs = logFileDir + "/" + logFile
+			logsOld = logFileDir + "/" + logFileOld
+			errl := os.Rename(logsOld, logs)
+			if errl != nil {
+				loggingLogger.Errorf("os.Rename(logsOld, logs) err %s", errl)
+			}
+			logIo, err := os.OpenFile(logsOld, os.O_CREATE|os.O_WRONLY, 0777)
+			if err != nil {
+				loggingLogger.Errorf("open log file err %s", err)
+			}
+
+			backend := logging.NewLogBackend(logIo, "", 0) //err io not close
+
+			backendFormatter := logging.NewBackendFormatter(backend, format)
+
+			logging.SetBackend(backendFormatter).SetLevel(loggingDefaultLevel, "")
+			var serviceLog = logging.MustGetLogger("service")
+			serviceLog.Info("log Division Init By Time")
+		}
 	}
-
-	//SetRollingDaily(logFileDir, logFile,&viper.Viper,callback)
-	//SetRollingFile(logFileDir,logFile,10000000,5,KB)
-
-	backend := logging.NewLogBackend(logIo, "", 0) //err io not close
-
-	//backend := logging.NewLogBackend(os.Stderr, "", 0)
-	backendFormatter := logging.NewBackendFormatter(backend, format)
-
-	logging.SetBackend(backendFormatter).SetLevel(loggingDefaultLevel, "")
-	var serviceLog = logging.MustGetLogger("service")
-	serviceLog.Info("aaaa")
 }

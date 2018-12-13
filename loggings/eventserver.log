@@ -1,3 +1,6 @@
-20181016150334.923 [service] Init -> INFO 001 aaaa
-20181016150334.935 [registerDb] GetDbHandler -> INFO 002 createDataBase success
-20181016150334.958 [service] createTable -> INFO 003 createTable success
+20181211195147.248 [service] Init -> INFO 006 log Division Init By Time
+20181211194913.356 [serviceLog] Init -> INFO 002 enter init function success
+20181211194930.850 [serviceLog] Init -> INFO 003 getDbHandler success
+20181211194957.894 [serviceLog] DistinguishChan -> INFO 006 enter DistinguishChan
+20181211194957.894 [serviceLog] func2 -> INFO 004 enter GoChainRequestCountEvent
+20181211194957.894 [serviceLog] func1 -> INFO 005 enter GoChainRequestEvent

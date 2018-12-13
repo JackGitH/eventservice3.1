@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="3d2bf298-5295-49ba-8297-ed440d5aab66" name="10.10.144.23" url="http://10.10.144.23">
+        <fileTransfer host="10.10.144.23" port="22" rootFolder="/home/mpsp/ghctender18/src/eventservice" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" />
+          </advancedOptions>
+          <option name="port" value="22" />
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

@@ -1,14 +1,20 @@
+selectdb:
+    selected: 2 # 1为MySQL  2 为leveldb 采用两种方式存储都可以
+    dbbase: ../leveldbStorage # leveldb 数据库存储位置
 mysql:
-    ip: 10.10.144.10
+    ip: 10.10.144.13
     port: 4444
     username: root
     passwd: UMF@test
-    dataBaseName: eventserver
-    registerTableName: events_client_address
-    eventmsgtableName: events_msg
+    dataBaseName: eventserver # 数据库
+    registerTableName: events_client_address # 客户端注册表
+    eventmsgTableName: events_msg # 交易表
+    eventResultTableName: events_result # 交易结果表
+    eventPushedTableName: events_push # 推送表
     idleConn: 500
     maxConn: 500
     libName: LIUDS
+    clearDataInterval: 148 #hour 定时清理数据库 一般保留七天
 
 monitor:
-    mport: 8852
+    mport: 8852 # 服务器监听端口
